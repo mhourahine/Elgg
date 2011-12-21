@@ -229,16 +229,14 @@ function elgg_clear_sticky_value($form_name, $variable) {
  * /livesearch?q=<query>
  *
  * Other options include:
- *     match_on	   string all or array(groups|users|friends)
+ *     match_on	   string all|array(groups|users|friends|subtype)
  *     match_owner int    0/1
  *     limit       int    default is 10
  *
  * @return string JSON string is returned and then exit
- * @access private
  */
 function input_livesearch_page_handler($page) {
 	global $CONFIG;
-
 	// only return results to logged in users.
 	if (!$user = elgg_get_logged_in_user_entity()) {
 		exit;
@@ -254,14 +252,12 @@ function input_livesearch_page_handler($page) {
 	$q = str_replace(array('_', '%'), array('\_', '\%'), $q);
 
 	$match_on = get_input('match_on', 'all');
+	if ($match_on == 'all' || $match_on[0] == 'all') {
+		$match_on = array('users', 'groups');
+	}
 
 	if (!is_array($match_on)) {
 		$match_on = array($match_on);
-	}
-
-	// all = users and groups
-	if (in_array('all', $match_on)) {
-		$match_on = array('users', 'groups');
 	}
 
 	if (get_input('match_owner', false)) {
@@ -272,12 +268,21 @@ function input_livesearch_page_handler($page) {
 		$owner_where = '';
 	}
 
-	$limit = sanitise_int(get_input('limit', 10));
+	$limit = get_input('limit', 10);
 
 	// grab a list of entities and send them in json.
 	$results = array();
-	foreach ($match_on as $match_type) {
-		switch ($match_type) {
+	foreach ($match_on as $type) {
+		switch ($type) {
+			case 'all':
+				// only need to pull up title from objects.
+
+				$options = array('owner_guid' => $owner_guid, 'limit' => $limit);
+				if (!$entities = elgg_get_entities($options) AND is_array($entities)) {
+					$results = array_merge($results, $entities);
+				}
+				break;
+
 			case 'users':
 				$query = "SELECT * FROM {$CONFIG->dbprefix}users_entity as ue, {$CONFIG->dbprefix}entities as e
 					WHERE e.guid = ue.guid
@@ -289,15 +294,15 @@ function input_livesearch_page_handler($page) {
 
 				if ($entities = get_data($query)) {
 					foreach ($entities as $entity) {
-						$result = array(
+						$json = json_encode(array(
 							'type' => 'user',
 							'name' => $entity->name,
 							'desc' => $entity->username,
-							'icon' => '<img class="elgg-livesearch-icon" src="' .
+							'icon' => '<img class="livesearch_icon" src="' .
 								get_entity($entity->guid)->getIconURL('tiny') . '" />',
 							'guid' => $entity->guid
-						);
-						$results[$entity->name . rand(1, 100)] = $result;
+						));
+						$results[$entity->name . rand(1, 100)] = $json;
 					}
 				}
 				break;
@@ -316,21 +321,22 @@ function input_livesearch_page_handler($page) {
 				";
 				if ($entities = get_data($query)) {
 					foreach ($entities as $entity) {
-						$result = array(
+						$json = json_encode(array(
 							'type' => 'group',
 							'name' => $entity->name,
 							'desc' => strip_tags($entity->description),
-							'icon' => '<img class="elgg-livesearch-icon" src="'
-								. get_entity($entity->guid)->getIconURL('tiny') . '" />',
+							'icon' => '<img class="livesearch_icon" src="'
+								. get_entity($entity->guid)->getIcon('tiny') . '" />',
 							'guid' => $entity->guid
-						);
+						));
 
-						$results[$entity->name . rand(1, 100)] = $result;
+						$results[$entity->name . rand(1, 100)] = $json;
 					}
 				}
 				break;
 
 			case 'friends':
+				$access = get_access_sql_suffix();
 				$query = "SELECT * FROM
 						{$CONFIG->dbprefix}users_entity as ue,
 						{$CONFIG->dbprefix}entity_relationships as er,
@@ -347,30 +353,30 @@ function input_livesearch_page_handler($page) {
 
 				if ($entities = get_data($query)) {
 					foreach ($entities as $entity) {
-						$result = array(
+						$json = json_encode(array(
 							'type' => 'user',
 							'name' => $entity->name,
 							'desc' => $entity->username,
-							'icon' => '<img class="elgg-livesearch-icon" src="'
-								. get_entity($entity->guid)->getIconURL('tiny') . '" />',
+							'icon' => '<img class="livesearch_icon" src="'
+								. get_entity($entity->guid)->getIcon('tiny') . '" />',
 							'guid' => $entity->guid
-						);
-						$results[$entity->name . rand(1, 100)] = $result;
+						));
+						$results[$entity->name . rand(1, 100)] = $json;
 					}
 				}
 				break;
 
 			default:
-				header("HTTP/1.0 400 Bad Request", true);
-				echo "livesearch: unknown match_on of $match_type";
-				exit;
+				// arbitrary subtype.
+				//@todo you cannot specify a subtype without a type.
+				// did this ever work?
+				elgg_get_entities(array('subtype' => $type, 'owner_guid' => $owner_guid));
 				break;
 		}
 	}
 
 	ksort($results);
-	header("Content-Type: application/json");
-	echo json_encode(array_values($results));
+	echo implode($results, "\n");
 	exit;
 }
 
